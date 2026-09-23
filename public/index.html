@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="referrer" content="no-referrer" />
+<title>订阅转换 · Subconverter Web</title>
+<meta name="description" content="基于 Cloudflare Worker 的订阅转换工具：将订阅链接转换为 Clash / Clash Verge Rev / sing-box 等格式" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7fb;
+    --card: #ffffff;
+    --fg: #15171a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --primary: #2f6feb;
+    --primary-fg: #ffffff;
+    --code-bg: #f1f3f8;
+    --ok: #16a34a;
+    --warn: #d97706;
+    --err: #dc2626;
+    --shadow: 0 8px 24px rgba(15, 23, 42, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d0f14;
+      --card: #161922;
+      --fg: #e7eaf0;
+      --muted: #94a3b8;
+      --border: #262a36;
+      --primary: #5b8def;
+      --code-bg: #1c2030;
+      --shadow: 0 8px 24px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Microsoft YaHei", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 24px 16px 64px;
+  }
+  .container { max-width: 720px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 28px; }
+  header h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: -.01em; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px;
+    box-shadow: var(--shadow);
+  }
+  .field { margin-bottom: 16px; }
+  .field:last-child { margin-bottom: 0; }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--fg);
+  }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .hint.warn { color: var(--warn); }
+  input[type=text], input[type=password], input[type=url], textarea, select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(47, 111, 235, .15);
+  }
+  textarea {
+    min-height: 84px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+  .targets { display: flex; flex-wrap: wrap; gap: 8px; }
+  .target-chip {
+    padding: 7px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg);
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 13px;
+    user-select: none;
+    transition: all .15s;
+    font-family: inherit;
+  }
+  .target-chip:hover { border-color: var(--primary); }
+  .target-chip.active {
+    background: var(--primary);
+    color: var(--primary-fg);
+    border-color: var(--primary);
+  }
+  .row { display: flex; gap: 8px; align-items: stretch; }
+  .row > input { flex: 1; min-width: 0; }
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+  }
+  .check-row input[type=checkbox] { margin: 0; }
+  .check-row label { margin: 0; font-weight: 500; flex: 1; cursor: pointer; }
+  button {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--primary);
+    color: var(--primary-fg);
+    transition: opacity .15s, transform .05s;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  button:hover { opacity: .92; }
+  button:active { transform: scale(.98); }
+  button.ghost {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  .actions { margin-top: 16px; display: flex; gap: 8px; }
+  .output {
+    margin-top: 22px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--code-bg);
+  }
+  .output h3 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .output pre {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    word-break: break-all;
+    white-space: pre-wrap;
+    color: var(--fg);
+  }
+  .output-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .output-actions button { padding: 7px 12px; font-size: 12.5px; font-weight: 500; }
+  .header-block {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
+  }
+  .header-block h3 { margin-top: 0; }
+  footer {
+    text-align: center;
+    margin-top: 28px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  footer a { color: var(--primary); text-decoration: none; }
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--fg);
+    color: var(--bg);
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s, transform .2s;
+    z-index: 100;
+  }
+  .toast.show { opacity: .95; transform: translateX(-50%) translateY(0); }
+  details { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  details summary { cursor: pointer; color: var(--fg); font-weight: 500; }
+  details > div { padding: 10px 0; }
+  details code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>订阅转换</h1>
+    <p>将节点订阅一键转为 Clash · Clash Verge Rev · sing-box · v2ray</p>
+  </header>
+
+  <div class="card">
+    <div class="field">
+      <label for="sub-url">订阅链接</label>
+      <textarea id="sub-url" placeholder="https://example.com/sub?token=xxx&#10;支持 base64 / Clash YAML / 节点 URI 列表"></textarea>
+      <div class="hint">本页所有操作均在浏览器本地完成，链接不会发往任何服务器</div>
+    </div>
+
+    <div class="field">
+      <label>目标格式</label>
+      <div class="targets" id="targets"></div>
+    </div>
+
+    <div class="field">
+      <label for="key">访问密钥</label>
+      <div class="row">
+        <input id="key" type="password" autocomplete="off" placeholder="部署时配置在 KV 或 STATIC_KEYS 环境变量中" />
+        <button class="ghost" id="toggle-key" type="button" title="显示/隐藏">👁</button>
+      </div>
+      <div class="hint">默认<strong>仅在内存中保留</strong>，关闭页面即清除（除非下方勾选记住密钥）</div>
+    </div>
+
+    <div class="field">
+      <div class="check-row">
+        <input id="auth-mode" type="checkbox" checked />
+        <label for="auth-mode">把密钥放在 <code>Authorization</code> 请求头里（推荐）</label>
+      </div>
+      <div class="hint">勾选后生成的 URL 不含 <code>pass</code>；改为额外提供一段 Header 配置，安全性更高（避免日志/历史泄露）</div>
+    </div>
+
+    <div class="field">
+      <label for="endpoint">服务端地址</label>
+      <input id="endpoint" type="url" placeholder="自动使用当前域名" />
+      <div class="hint">默认就是你打开本页的地址，留空即可</div>
+    </div>
+
+    <div class="field">
+      <div class="check-row">
+        <input id="remember-key" type="checkbox" />
+        <label for="remember-key">在本机浏览器记住密钥（不安全 / 共用设备请关闭）</label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="generate" type="button">生成订阅链接</button>
+      <button id="reset" class="ghost" type="button">清空</button>
+    </div>
+
+    <div class="output" id="output" hidden>
+      <h3>生成的订阅链接</h3>
+      <pre id="result-url"></pre>
+      <div class="output-actions">
+        <button id="copy-url" class="ghost" type="button">复制链接</button>
+        <button id="open-url" class="ghost" type="button">在新窗口打开</button>
+        <button id="copy-clash" class="ghost" type="button">复制 Clash 一键导入</button>
+      </div>
+      <div class="header-block" id="header-block" hidden>
+        <h3>请求头（在客户端添加）</h3>
+        <pre id="result-header"></pre>
+        <div class="output-actions">
+          <button id="copy-header" class="ghost" type="button">复制 Header</button>
+        </div>
+        <div class="hint" style="margin-top: 6px;">
+          客户端不支持自定义 Header 时，请取消上方勾选，密钥会写回 URL 的 <code>pass</code> 参数（隐私性较低）。
+        </div>
+      </div>
+    </div>
+
+    <details>
+      <summary>说明 / 接口文档</summary>
+      <div>
+        <p><strong>API：</strong><code>GET /api/sub?url=&lt;订阅&gt;&amp;target=&lt;格式&gt;</code></p>
+        <p><strong>支持格式：</strong>clash · clash-meta · singbox · v2ray · uri</p>
+        <p><strong>鉴权：</strong></p>
+        <ul>
+          <li>推荐：<code>Authorization: Bearer &lt;key&gt;</code> 请求头</li>
+          <li>兼容：URL 查询参数 <code>?pass=&lt;key&gt;</code>（密钥暴露在日志/历史中）</li>
+        </ul>
+        <p><strong>密钥配置（部署侧）：</strong></p>
+        <ul>
+          <li>KV 单条：<code>wrangler kv key put --binding=AUTH_KV "key:&lt;your-key&gt;" "1"</code></li>
+          <li>KV 列表：<code>wrangler kv key put --binding=AUTH_KV "keys" '["k1","k2"]'</code></li>
+          <li>环境变量：<code>wrangler secret put STATIC_KEYS</code> 然后输入 <code>k1,k2</code></li>
+        </ul>
+      </div>
+    </details>
+  </div>
+
+  <footer>
+    本页静态生成 · 不依赖后端 · <a href="/api/health" target="_blank" rel="noopener">服务状态</a>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TARGETS = [
+    { id: "clash", label: "Clash", desc: "Clash / Clash Verge Rev / Mihomo" },
+    { id: "clash-meta", label: "Clash Meta", desc: "Clash.Meta / Mihomo 内核" },
+    { id: "singbox", label: "sing-box", desc: "sing-box / NekoBox" },
+    { id: "v2ray", label: "v2ray (Base64)", desc: "v2rayN / v2rayNG" },
+    { id: "uri", label: "URI 列表", desc: "明文节点链接（每行一条）" }
+  ];
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // 持久化策略：
+  //   - 偏好（target、auth-mode、remember-key、url、endpoint）→ localStorage
+  //   - 密钥 key → 仅 sessionStorage 或不存（取决于 remember-key）
+  var PREF_KEY = "subconverter:prefs:v1";
+  var KEY_STORAGE = "subconverter:key:v1";
+  var prefs = loadPrefs();
+  var sessionKey = sessionStorage.getItem(KEY_STORAGE) || "";
+  var persistedKey = prefs.rememberKey ? (localStorage.getItem(KEY_STORAGE) || "") : "";
+
+  // 渲染 target 选择器
+  var targetsBox = $("targets");
+  TARGETS.forEach(function (t) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "target-chip" + (prefs.target === t.id ? " active" : "");
+    btn.textContent = t.label;
+    btn.title = t.desc;
+    btn.dataset.target = t.id;
+    btn.addEventListener("click", function () {
+      prefs.target = t.id;
+      Array.prototype.forEach.call(targetsBox.children, function (c) {
+        c.classList.toggle("active", c.dataset.target === t.id);
+      });
+      savePrefs();
+      if (!$("output").hidden) generate();
+    });
+    targetsBox.appendChild(btn);
+  });
+
+  // 回填非敏感字段
+  $("sub-url").value = prefs.url || "";
+  $("endpoint").value = prefs.endpoint || "";
+  $("auth-mode").checked = prefs.authMode !== false; // 默认 true
+  $("remember-key").checked = !!prefs.rememberKey;
+  // 密钥仅在显式记住时回填，否则 session 优先
+  $("key").value = persistedKey || sessionKey || "";
+
+  // 显示/隐藏密钥
+  $("toggle-key").addEventListener("click", function () {
+    var input = $("key");
+    input.type = input.type === "password" ? "text" : "password";
+  });
+
+  // 输入即保存
+  $("sub-url").addEventListener("input", function () {
+    prefs.url = $("sub-url").value.trim();
+    savePrefs();
+  });
+  $("endpoint").addEventListener("input", function () {
+    prefs.endpoint = $("endpoint").value.trim();
+    savePrefs();
+  });
+  $("auth-mode").addEventListener("change", function () {
+    prefs.authMode = $("auth-mode").checked;
+    savePrefs();
+    if (!$("output").hidden) generate();
+  });
+  $("remember-key").addEventListener("change", function () {
+    prefs.rememberKey = $("remember-key").checked;
+    savePrefs();
+    persistKeyIfNeeded();
+  });
+  $("key").addEventListener("input", function () {
+    // 始终写 session（关闭页面即清）
+    var k = $("key").value;
+    if (k) sessionStorage.setItem(KEY_STORAGE, k);
+    else sessionStorage.removeItem(KEY_STORAGE);
+    persistKeyIfNeeded();
+  });
+
+  function persistKeyIfNeeded() {
+    var k = $("key").value;
+    if (prefs.rememberKey && k) {
+      localStorage.setItem(KEY_STORAGE, k);
+    } else {
+      localStorage.removeItem(KEY_STORAGE);
+    }
+  }
+
+  $("generate").addEventListener("click", generate);
+  $("reset").addEventListener("click", function () {
+    $("sub-url").value = "";
+    $("key").value = "";
+    $("endpoint").value = "";
+    sessionStorage.removeItem(KEY_STORAGE);
+    localStorage.removeItem(KEY_STORAGE);
+    prefs.url = "";
+    prefs.endpoint = "";
+    savePrefs();
+    $("output").hidden = true;
+  });
+
+  $("copy-url").addEventListener("click", function () {
+    copyText($("result-url").textContent, "已复制订阅链接");
+  });
+  $("open-url").addEventListener("click", function () {
+    if (prefs.authMode && $("key").value) {
+      if (!confirm("当前使用 Header 鉴权，新窗口直接打开会丢失密钥（401）。仍要继续？")) return;
+    }
+    window.open($("result-url").textContent, "_blank", "noopener,noreferrer");
+  });
+  $("copy-clash").addEventListener("click", function () {
+    var url = $("result-url").textContent;
+    if (prefs.authMode && $("key").value) {
+      if (!confirm("Clash 一键导入不支持 Header；继续将自动改用 ?pass= 形式（密钥会进入客户端日志）。")) return;
+      // 导出降级版 URL（带 pass）
+      var u = new URL(url);
+      u.searchParams.set("pass", $("key").value);
+      url = u.toString();
+    }
+    var importUrl = "clash://install-config?url=" + encodeURIComponent(url) + "&name=Subconverter";
+    copyText(importUrl, "已复制 Clash 一键导入链接");
+  });
+  $("copy-header").addEventListener("click", function () {
+    copyText($("result-header").textContent, "已复制 Header");
+  });
+
+  $("sub-url").addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generate();
+  });
+
+  function generate() {
+    var subUrl = $("sub-url").value.trim();
+    var key = $("key").value;
+    var endpoint = $("endpoint").value.trim() || (location.origin);
+
+    if (!subUrl) { toast("请填写订阅链接", true); $("sub-url").focus(); return; }
+    if (!/^https?:\/\//i.test(subUrl)) {
+      toast("订阅链接需以 http:// 或 https:// 开头", true);
+      return;
+    }
+    var base;
+    try { base = new URL(endpoint); }
+    catch (e) { toast("服务端地址不合法", true); return; }
+
+    var u = new URL("/api/sub", base);
+    u.searchParams.set("url", subUrl);
+    u.searchParams.set("target", prefs.target || "clash");
+
+    var useHeader = prefs.authMode && key;
+    if (key && !useHeader) u.searchParams.set("pass", key);
+
+    $("result-url").textContent = u.toString();
+    if (useHeader) {
+      $("result-header").textContent = "Authorization: Bearer " + key;
+      $("header-block").hidden = false;
+    } else {
+      $("header-block").hidden = true;
+    }
+    $("output").hidden = false;
+    $("output").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  // ---- 工具 ----
+  function copyText(text, msg) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { toast(msg || "已复制"); },
+        function () { fallbackCopy(text, msg); }
+      );
+    } else { fallbackCopy(text, msg); }
+  }
+  function fallbackCopy(text, msg) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); toast(msg || "已复制"); }
+    catch (e) { toast("复制失败，请手动复制", true); }
+    document.body.removeChild(ta);
+  }
+  var toastTimer;
+  function toast(msg, isError) {
+    var el = $("toast");
+    el.textContent = msg;
+    el.style.background = isError ? "var(--err)" : "var(--fg)";
+    el.style.color = isError ? "#fff" : "var(--bg)";
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove("show"); }, 1800);
+  }
+  function loadPrefs() {
+    try {
+      var s = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
+      if (!s.target) s.target = "clash";
+      if (typeof s.authMode !== "boolean") s.authMode = true;
+      return s;
+    } catch (e) {
+      return { target: "clash", authMode: true };
+    }
+  }
+  function savePrefs() {
+    try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); }
+    catch (e) { /* quota / private mode */ }
+  }
+
+  // 一次性数据迁移：清掉旧版的明文 state
+  try { localStorage.removeItem("subconverter:state:v1"); } catch (e) {}
+})();
+</script>
+
+</body>
+</html>
